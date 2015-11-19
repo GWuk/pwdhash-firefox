@@ -11,9 +11,10 @@ Hashed passwords can also be generated at https://www.pwdhash.com/
 
 ## roadmap
 
-* make it restartless (restructure code)
+* make it restartless (restructure code / migrate to jpm)
+* create preferences dialog
+* highlight password field if pwdhash is activated (optional)
 
 ## feature brainstorm
 
-* activate for all password fields (press F2 to deactivate for current page, needs new option window)
-
+* activate for all password fields (press F2 to deactivate for current page, optional)
