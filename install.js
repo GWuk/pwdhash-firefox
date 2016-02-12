@@ -6,7 +6,7 @@ var XpiInstaller = {
 	// --- Editable items begin ---
 	extFullName: 'PwdHash', // The name displayed to the user (don't include the version)
 	extShortName: 'stanford-pwdhash', // The leafname of the JAR file (without the .jar part)
-	extVersion: '1.7.3',
+	extVersion: '1.7.4',
 	extAuthor: 'Stanford University',
 	extPostInstallMessage: 'Success! Please restart your browser to finish the installation.', // Set to null for no post-install message
 	// --- Editable items end ---

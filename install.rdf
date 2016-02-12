@@ -4,7 +4,7 @@
   <RDF:Description about="urn:mozilla:install-manifest">
 
   <em:id>{bb8d77b0-a845-4249-a205-ef7395587b69}</em:id>
-  <em:version>1.7.3</em:version>
+  <em:version>1.7.4</em:version>
   <em:type>2</em:type>
 
   <em:targetApplication>
