@@ -32,6 +32,15 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 // Put in some better defenses for focus stealing attacks
 // Config file
 
+
+//////////////////////////////////////////////////////////////////////////////
+// Constants
+
+const SPH_kPasswordKey = "DOM_VK_F2";
+const SPH_kPasswordPrefix = "@@";
+const SPH_kMinimumPasswordSize = 5;  // Our defense against focus stealing
+const SPH_AddOnName = "PwdHash";
+
 ////////////////////////////////////////////////////////////////////////////
 // Debug stuff
 
@@ -46,15 +55,9 @@ var SPH_debug = true;
  */
 function SPH_dump(msg) {
   if (SPH_debug)
-    dump("|||||||||| SPH pwdhash: " + msg + "\n");
+    // console.log("|||||||||| SPH pwdhash: " + msg + "\n");
+    console.log(SPH_AddOnName + ": " + msg);
 }
-
-//////////////////////////////////////////////////////////////////////////////
-// Constants
-
-const SPH_kPasswordKey = "DOM_VK_F2";
-const SPH_kPasswordPrefix = "@@";
-const SPH_kMinimumPasswordSize = 5;  // Our defense against focus stealing
 
 ////////////////////////////////////////////////////////////////////////////
 // "Major" objects/classes
@@ -84,7 +87,18 @@ SPH_PasswordKeyMonitor.prototype = {
        evt.preventDefault();    // Do not let the character hit the page
        if (evt.type == "keydown") {
          evt.pwdkey = true;
-         this.attemptPasswordKeyLogin();
+         if (evt.shiftKey) {
+           // enable legacy mode on Shift-F2
+           SPH_legacyUser = true
+           SPH_legacy = true;
+           SPH_dump("enabled legacy mode");
+           SPH_controller.warnUser(SPH_strings["pwdhash.legacy"]);  
+         }
+         if (this.attemptPasswordKeyLogin()) {
+            SPH_dump("enabled pwdhash on field '" + evt.target.name + "'");
+         } else {
+            SPH_dump("failed to get pwd field");
+         } 
        }
      }
 
@@ -100,6 +114,7 @@ SPH_PasswordKeyMonitor.prototype = {
            this.keystream.join('') == SPH_kPasswordPrefix) {
          evt.alreadyIntercepted = true;  // Don't intercept again
          this.attemptPasswordPrefixLogin(lastChar);
+
        }
      }
   },
@@ -114,25 +129,42 @@ SPH_PasswordKeyMonitor.prototype = {
     }
 
     // Try the focused field, if it's a password field
-    var element = document.commandDispatcher.focusedElement;
-    if (element) { 
-      if (element.nodeName == "INPUT" && element.type == "password") {
-        element.value = "";  // clear field
-        return new SPH_PasswordProtector(element, this);
-      }
+    try {
+     var element = document.activeElement;
+     if (element) { 
+       if (element.nodeName == "INPUT" && element.type == "password") {
+         element.value = "";  // clear field
+         return new SPH_PasswordProtector(element, this);
+       }
+     }
+    } catch(e) {
+      SPH_dump(e.message);
     }
 
     // Try to find a password field on the page and its frames
-    var window = document.getElementById('content')
-      .selectedBrowser.contentWindow;
-    var passwordField = this.findPasswordField(window);
-    if (passwordField) {
-      passwordField.focus();
-      return new SPH_PasswordProtector(passwordField, this);
+    try {
+     var window = document.getElementById('content')
+       .selectedBrowser.contentWindow;
+     var passwordField = this.findPasswordField(window);
+     if (passwordField) {
+       passwordField.focus();
+       return new SPH_PasswordProtector(passwordField, this);
+     }
+    } catch(e) {
+      SPH_dump(e.message);
     }
- 
+
+    try {
+     var pwdfields = document.getElementsByTagName('INPUT');
+     for (var i = 0; i < pwdfields.length; i++)
+       if (pwdfields[i].type == "password") return new SPH_PasswordProtector(pwdfields[i], this);
+    } catch(e) {
+      SPH_dump(e.message);
+    }
+
+        
     // Yikes! Couldn't find any password fields
-    var msg = SPH_strings.getString("pwdhash.pwdkeywarn");
+    var msg = SPH_strings["pwdhash.pwdkeywarn"];
     SPH_controller.warnUser(msg);  
     return null;
   },
@@ -145,15 +177,20 @@ SPH_PasswordKeyMonitor.prototype = {
       return this.protector;
     }
 
-    var element = document.commandDispatcher.focusedElement;
-    if (element) { 
-      if (element.nodeName == "INPUT" && element.type == "password") {
-        if (element.value + lastChar == SPH_kPasswordPrefix) {
-          return new SPH_PasswordProtector(element, this);
+    try {
+      var element = document.activeElement;
+      if (element) { 
+        if (element.nodeName == "INPUT" && element.type == "password") {
+          if (element.value + lastChar == SPH_kPasswordPrefix) {
+            return new SPH_PasswordProtector(element, this);
+          }
         }
       }
+    } catch(e) {
+      SPH_dump(e.message);
     }
-    var msg = SPH_strings.getString("pwdhash.pwdprefixwarn");
+      
+    var msg = SPH_strings["pwdhash.pwdprefixwarn"];
     SPH_controller.warnUser(msg);     // Couldn't find any password fields
     return null;
   },
@@ -181,17 +218,26 @@ SPH_PasswordKeyMonitor.prototype = {
  * Triggers hashing when the user is done.
  */
 function SPH_PasswordProtector(field, monitor) {
+
+  // check for salt
+  if (!SPH_legacy && (SPH_salt == "")) {
+    SPH_controller.warnUser(SPH_strings["pwdhash.saltempty"]);      
+    field.value = ""
+    return null;
+  }
+ 
   this.keyMap = new Array();
   this.nextAvail = this.firstAvail;
   this.field = field;
   this.field.setAttribute("secure","yes");
+  this.borderstyle = this.field.style.border;
+  this.field.style.border = "2px dashed " + (SPH_legacy ? "red" : "green");
   window.addEventListener("keydown", this, true);
   window.addEventListener("keyup", this, true);
   window.addEventListener("keypress", this, true);
   window.addEventListener("blur", this, true);
   window.addEventListener("focus", this, true);
   window.addEventListener("submit", this, true);
-
   monitor.protector = this;
   this._disable = function() {
     window.removeEventListener("keydown", this, true);
@@ -202,6 +248,7 @@ function SPH_PasswordProtector(field, monitor) {
     window.removeEventListener("submit", this, true);
     monitor.protector = null;
   }
+
 }
 
 SPH_PasswordProtector.prototype = {
@@ -215,12 +262,13 @@ SPH_PasswordProtector.prototype = {
   keyMap: null,  // A mapping from masked characters to originals
 
   field: null,  // The field we are protecting
+  
+  borderstyle: null, // remember previous style
 
   /**
    * Implementation of eventListener. Remembers keystrokes and watches for blur
    */
   handleEvent: function(evt) {
-
     if(!evt.pwdkey &&
        evt.originalTarget != this.field && 
        evt.originalTarget != this.field.form) {
@@ -245,7 +293,7 @@ SPH_PasswordProtector.prototype = {
     if(evt.type == "keypress" && evt.keyCode == 0) {
       evt.stopPropagation();   // Don't let user JavaScript see this event
       evt.preventDefault();    // Do not let the character hit the page
-      this.fireKeyPress(evt.originalTarget, this.mask(evt.charCode));
+      evt.originalTarget.value = evt.originalTarget.value + String.fromCharCode(this.mask(evt.charCode));
     }
    
     if (evt.type == "blur" || evt.type == "submit") {
@@ -257,7 +305,7 @@ SPH_PasswordProtector.prototype = {
   _warnUntrusted: function() {
     this._disable();
     if (this.field) this.field.value = '';
-    var msg = SPH_strings.getString("pwdhash.trustedeventwarn");
+    var msg = SPH_strings["pwdhash.trustedeventwarn"];
     SPH_dump(msg);      // Ideally, use SPH_controller.warnUser(msg);
   },
 
@@ -275,23 +323,12 @@ SPH_PasswordProtector.prototype = {
   },
 
   /**
-   * Create an artificial keypress that's marked so we know not to intercept
-   */
-  fireKeyPress: function(target, charCode) {
-    var evt = document.createEvent("KeyEvents");
-    evt.initKeyEvent("keypress", true, true, window, false, false, 
-                     false, false, 0, charCode);
-    evt.alreadyIntercepted = true;
-    target.dispatchEvent(evt);
-  },
-
-  /**
    * Remember a keystroke and give me a mask I can use in its place
    */
   mask: function(charCode) {
     this.keyMap[this.nextAvail] = charCode;
     if (this.nextAvail > this.lastAvail) {
-      var msg = SPH_strings.getString("pwdhash.longpasswordwarn");
+      var msg = SPH_strings["pwdhash.longpasswordwarn"];
       SPH_controller.warnUser(msg);  
       this._disable();
     }
@@ -316,27 +353,37 @@ SPH_PasswordProtector.prototype = {
 
       // Enforce minimum size requirement
       if(password.length < SPH_kMinimumPasswordSize) {
-        var msg = SPH_strings.getString("pwdhash.shortpasswordwarn");
+        var msg = SPH_strings["pwdhash.shortpasswordwarn"];
         SPH_controller.warnUser(msg);  
         field.value = '';
-        return;
+      } else {      
+        // Obtain the hashed password
+        var uri = new String(field.ownerDocument.location);
+        var domain = (new SPH_DomainExtractor()).extractDomain(uri);
+        var unmasked = this.getPasswordFromMasked(password);
+        
+        // get password (and check for legacy mode)      
+        if (SPH_legacy) {
+          field.value = (new SPH_HashedPassword_MD5(unmasked, domain));
+        } else {
+          field.value = (new SPH_HashedPassword(unmasked, domain, SPH_salt, SPH_iterations));
+        }
+              
+        // Clear the field if the user tries to edit the field
+        var refocus = function() {
+          field.removeEventListener("keydown", refocus, false);
+          field.removeEventListener("focus", refocus, false);
+          field.value = "";
+        }
+        field.addEventListener("keydown", refocus, false);
+        field.addEventListener("focus", refocus, false);
       }
-      
-      // Obtain the hashed password
-      var uri = new String(field.ownerDocument.location);
-      var domain = (new SPH_DomainExtractor()).extractDomain(uri);
-      var unmasked = this.getPasswordFromMasked(password);
-      field.value = (new SPH_HashedPassword(unmasked, domain));
-
-      // Clear the field if the user tries to edit the field
-      var refocus = function() {
-        field.removeEventListener("keydown", refocus, false);
-        field.removeEventListener("focus", refocus, false);
-        field.value = "";
-      }
-      field.addEventListener("keydown", refocus, false);
-      field.addEventListener("focus", refocus, false);
     }
+    
+    // restore style
+    this.field.style.border = this.borderstyle;
+    // reset 
+    SPH_legacyUser = false
   },
 
 }
@@ -351,13 +398,7 @@ function SPH_Controller(model) {
 
 SPH_Controller.prototype = {
   warnUser: function(msg) {
-    var window = document.getElementById('content')
-	.selectedBrowser.contentWindow;
-    var authPrompt = Components
-        .classes["@mozilla.org/embedcomp/prompt-service;1"]
-	.getService(Components.interfaces.nsIPromptService);
-    var title = SPH_strings.getString("pwdhash.warningtitle");
-    var success = authPrompt.alert(window, title, msg);
+    alert(SPH_AddOnName + ": " + msg);
   },
 
 }
@@ -365,10 +406,44 @@ SPH_Controller.prototype = {
 // What script would be complete without a couple of globals?
 var SPH_controller;
 var SPH_strings;
+var SPH_salt = "";
+var SPH_iterations;
+var SPH_legacy = true; // default to legacy mode
+var SPH_strings = {};
+var SPH_legacyUser = false // user requested legacy mode?
 
-function SPH_startup(event) {
-  SPH_controller = new SPH_Controller();
-  SPH_strings = document.getElementById("stanford-pwdhash-strings");
+function SPH_getOptions() {
+  function onError(error) {
+    SPH_dump("Error: ${error}");
+  }
+  
+  function onGot(item) {
+    SPH_salt = item.salt;
+    SPH_iterations = item.iterations;
+    if (!SPH_legacyUser) SPH_legacy = (item.legacy == null ? true : item.legacy)
+    //SPH_dump(SPH_salt); 
+    //SPH_dump(SPH_iterations); 
+    if (SPH_legacy) SPH_dump("legacy = " + SPH_legacy);
+  }
+
+  return browser.storage.local.get().then(onGot,onError);
+
 }
 
-window.addEventListener("load", SPH_startup, false);
+function SPH_init() {
+  SPH_controller = new SPH_Controller();
+
+  SPH_strings["pwdhash.pwddisplay"]="Hashed password for %s: %s";
+  SPH_strings["pwdhash.warningtitle"]="PwdHash Warning";
+  SPH_strings["pwdhash.pwdkeywarn"]="PwdHash could not find a password field on this page.\nIt is possible, though unlikely, that the site trying to steal your password.\nDo not enter your PwdHash password into this page.";
+  SPH_strings["pwdhash.pwdprefixwarn"]="You typed the PwdHash password prefix, but you are not currently in a password field that starts with the password prefix.\nIt is possible, though unlikely, that the site trying to steal your password.\nDo not enter your PwdHash password into this page.";
+  SPH_strings["pwdhash.trustedeventwarn"]="JavaScript on this page may be interfering with your ability to enter a password.\nAs a precaution, the password field has been cleared.\nIf the problem persists, you might not be able to use PwdHash on this page.";
+  SPH_strings["pwdhash.longpasswordwarn"]="Your password is too long to protect.";
+  SPH_strings["pwdhash.shortpasswordwarn"]="Your password is too short to protect.";
+  SPH_strings["pwdhash.saltempty"]="No salt set, you have to set one in Add-On options.";
+  SPH_strings["pwdhash.legacy"]="Legacy mode enabled manually, reload page to use mode configured in options";
+
+  SPH_getOptions()
+}
+
+SPH_init();
